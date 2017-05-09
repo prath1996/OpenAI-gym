@@ -1,0 +1,173 @@
+import tensorflow as tf
+import gym
+import numpy as np
+
+
+env = gym.make('CartPole-v0')
+action_space = 2 # {0 , 1}
+
+# No. of input channels
+num_channels = 4
+
+# 2 possible outputs
+num_classes = 2
+
+gamma = 1 # discount factor
+
+#Helper functions
+def new_weights(shape):
+    return tf.Variable(tf.truncated_normal(shape,stddev=0.5))
+
+def new_biases(length):
+    return tf.Variable(tf.constant(0.05, shape=[length]))
+
+def new_fc_layer(inp, weights, n_outputs, use_relu=True):
+
+    biases = new_biases(n_outputs)
+
+    layer = tf.add(tf.matmul(inp, weights), biases)
+    if use_relu:
+        layer = tf.nn.relu(layer)
+
+    return layer
+
+
+x_image = tf.placeholder(tf.float32, [None, 4])
+rewards = tf.placeholder(tf.float32, [None])
+acts = tf.placeholder(tf.float32, [None, action_space])
+
+
+# Calculating Value function
+w_v1 = new_weights(shape=[4, 10])
+h_v1 = new_fc_layer(x_image, w_v1, 10)
+w_v2 = new_weights(shape=[10, 1])
+avg_val = new_fc_layer(h_v1, w_v2, 1, use_relu=False)
+
+diff = avg_val - rewards
+loss = tf.nn.l2_loss(diff)
+optimizer_val = tf.train.AdamOptimizer(learning_rate=0.1).minimize(loss)
+
+
+# Policy Gradient (Single layered)
+w = new_weights(shape=[4, 2])
+layer_fc = new_fc_layer(x_image, w, 2, use_relu=False)
+
+act_prob = tf.nn.softmax(layer_fc)
+chosen_prob = tf.reduce_sum(tf.multiply(act_prob, acts),reduction_indices=[1])
+advantage = rewards - avg_val
+update = tf.multiply(tf.log(chosen_prob), advantage)
+cost = -tf.reduce_sum(update)
+optimizer = tf.train.AdamOptimizer(learning_rate=1e-3).minimize(cost)
+
+
+
+sess = tf.Session()
+sess.run(tf.global_variables_initializer())
+
+
+# Returns list of States, action_taken and rewards obtained in each state over an episode
+def form_batch():
+    r_batch = np.zeros(1)
+    a_batch = np.zeros((1, action_space))
+
+
+    act = np.random.randint(0, action_space)
+
+    new, r, done, _ = env.step(act)
+
+    batch = np.zeros((1, 4))
+    batch[0] = new
+
+    a_batch[0, act] = 1
+
+    r_batch[0] = r
+
+
+    r_temp = np.zeros(1)
+
+    while not done:
+        inp = np.zeros((1, 4))
+        inp[0] = new
+        fd = {x_image:inp}
+        prob = sess.run(act_prob, feed_dict=fd)
+
+        temp = np.random.random()
+        if temp > prob[0, 0]:
+            act = 0
+        else:
+            act = 1
+
+
+        new, r, done, _ = env.step(act)
+
+        a_temp = np.zeros((1, action_space))
+        a_temp[0, act] = 1
+        a_batch = np.concatenate((a_batch, a_temp))
+
+        r_temp[0] = r
+        r_batch = np.concatenate((r_batch, r_temp))
+
+        inp[0] = new
+        batch = np.concatenate((batch, inp))
+
+    l = np.shape(r_batch)[0]
+    i = l - 2
+
+    while i >= 0:
+        r_batch[i] += gamma * r_batch[i+1]
+        i -= 1
+
+    return batch, r_batch, a_batch
+
+
+# Updating state value function approximator
+def train_val(n_epoch):
+
+    env.reset()
+
+    for i in range(n_epoch):
+
+        env.reset()
+
+        batch, r_batch, a = form_batch()
+        fd = {x_image:batch, rewards:r_batch, acts:a}
+        sess.run(optimizer_val, feed_dict=fd)
+
+
+# Training Policy Gradient network
+def train():
+
+    env.reset()
+
+    n_episodes = 0
+    avg_r = 0
+
+    while avg_r < 198:
+
+        avg_r = 0
+
+        for i in range(100):
+
+            env.reset()
+
+            batch, r_batch, a = form_batch()
+            fd = {x_image:batch, rewards:r_batch, acts:a}
+            sess.run(optimizer, feed_dict=fd)
+            sess.run(optimizer_val, feed_dict=fd)
+
+            avg_r += r_batch[0]
+
+        avg_r = float(avg_r)/100
+        n_episodes += 100
+        print 'episode count = ', n_episodes, ' and reward =', avg_r
+    return n_episodes
+
+train_val(600) # Training the value estimator to get an estimate of a state value function in order to implement Policy Gradient
+
+# Begin recording after initial training period
+monitor_dir = 'path to store videos'
+env = gym.wrappers.Monitor(env, monitor_dir, force=True)
+
+ep = train()
+print 'Episodes required to train = ', ep
+print 'Training completed :)'
