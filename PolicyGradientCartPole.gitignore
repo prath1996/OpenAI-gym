@@ -18,6 +18,10 @@ gamma = 1 # discount factor
 def new_weights(shape):
     return tf.Variable(tf.truncated_normal(shape,stddev=0.5))
 
+# weights for value function
+def new_weights2(shape):
+    return tf.Variable(tf.constant(0.05, shape=shape))
+
 def new_biases(length):
     return tf.Variable(tf.constant(0.05, shape=[length]))
 
@@ -38,12 +42,12 @@ acts = tf.placeholder(tf.float32, [None, action_space])
 
 
 # Calculating Value function
-w_v1 = new_weights(shape=[4, 10])
+w_v1 = new_weights2(shape=[4, 10])
 h_v1 = new_fc_layer(x_image, w_v1, 10)
-w_v2 = new_weights(shape=[10, 1])
+w_v2 = new_weights2(shape=[10, 1])
 avg_val = new_fc_layer(h_v1, w_v2, 1, use_relu=False)
 
-diff = avg_val - rewards
+diff = tf.multiply(rewards - avg_val, rewards - avg_val)
 loss = tf.nn.l2_loss(diff)
 optimizer_val = tf.train.AdamOptimizer(learning_rate=0.1).minimize(loss)
 
